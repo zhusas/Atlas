@@ -204,6 +204,14 @@ void network_mysqld_con_free(network_mysqld_con *con) {
 
 	if (con->server) network_socket_free(con->server);
 	if (con->client) network_socket_free(con->client);
+    
+    network_mysqld_con_lua_t *st = con->plugin_con_state;
+    if (st && st->backend) {
+        if (!g_atomic_int_compare_and_exchange(&st->backend->connected_clients, 0, 0)) {
+            g_atomic_int_dec_and_test(&st->backend->connected_clients);    
+            //g_critical("last in CON_STATE_CONNECT_SERVER: %08x's connected_clients is %d\n", st->onnected_clients);
+        }
+    }
 
 	/* we are still in the conns-array */
 /*
@@ -982,7 +990,10 @@ void network_mysqld_con_handle(int event_fd, short events, void *user_data) {
 				network_socket_free(con->server);
 				con->server = NULL;
 				ostate = CON_STATE_INIT;
-
+                if (!g_atomic_int_compare_and_exchange(&st->backend->connected_clients, 0, 0)) {
+                    g_atomic_int_dec_and_test(&st->backend->connected_clients);         
+                    //g_critical("last in CON_STATE_CONNECT_SERVER: %08x's connected_clients is %d\n", st->onnected_clients);
+                }
 				g_warning("timeout in connecting server");
 				break;
 			}
@@ -1134,7 +1145,7 @@ void network_mysqld_con_handle(int event_fd, short events, void *user_data) {
 			case NETWORK_SOCKET_SUCCESS:
 				break;
 			case NETWORK_SOCKET_WAIT_FOR_EVENT:
-				WAIT_FOR_EVENT(con->client, EV_READ, src->wait_timeout);
+				WAIT_FOR_EVENT(con->client, EV_READ, srv->wait_timeout);
 				NETWORK_MYSQLD_CON_TRACK_TIME(con, "wait_for_event::read_auth");
 
 				return;
